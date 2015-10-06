@@ -73,7 +73,7 @@
 
 #define WAIT_US			200
 #define DELTA 			msecs_to_jiffies(500)
-#define FREQ_TABLE_ENTRY	(3)
+#define FREQ_TABLE_ENTRY	(7)
 #define DELAY_TIME		(40*HZ)
 
 DECLARE_PER_CPU(struct cpufreq_policy *, cpufreq_cpu_data);
@@ -109,7 +109,11 @@ struct sprd_dvfs_table {
 
 static struct sprd_dvfs_table sc8825g_dvfs_table[] = {
 	[0] = { 1000000 , 1200000 }, /* 1000,000KHz,  1200mv */
-	[1] = {  500000 , 1100000 }, /* 500,000KHz,  1100mv */
+	[1] = {  900000 , 1180000 }, /* 900,000KHz,  1180mv */
+	[2] = {  800000 , 1160000 }, /* 800,000KHz,  1160mv */
+	[3] = {  700000 , 1140000 }, /* 700,000KHz,  1140mv */
+	[4] = {  600000 , 1120000 }, /* 600,000KHz,  1120mv */
+	[5] = {  500000 , 1100000 }, /* 500,000KHz,  1100mv */
 };
 
 static struct sprd_dvfs_table sc8825g_plus_dvfs_table[] = {
