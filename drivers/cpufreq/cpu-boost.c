@@ -43,7 +43,7 @@ static struct workqueue_struct *cpu_boost_wq;
 
 static struct work_struct input_boost_work;
 
-static unsigned int boost_ms = 50;
+static unsigned int boost_ms;
 module_param(boost_ms, uint, 0644);
 
 static unsigned int sync_threshold;
@@ -63,7 +63,8 @@ static u64 last_input_time;
  * make sure policy min >= boost_min. The cpufreq framework then does the job
  * of enforcing the new policy.
  */
-static int boost_adjust_notify(struct notifier_block *nb, unsigned long val, void *data)
+static int boost_adjust_notify(struct notifier_block *nb, unsigned long val,
+				void *data)
 {
 	struct cpufreq_policy *policy = data;
 	unsigned int cpu = policy->cpu;
@@ -127,7 +128,7 @@ static int boost_mig_sync_thread(void *data)
 	struct cpufreq_policy src_policy;
 	unsigned long flags;
 
-	while(1) {
+	while (1) {
 		wait_event(s->sync_wq, s->pending || kthread_should_stop());
 
 		if (kthread_should_stop())
@@ -146,9 +147,10 @@ static int boost_mig_sync_thread(void *data)
 		if (ret)
 			continue;
 
-		if (dest_policy.cur >= src_policy.cur ) {
+		if (dest_policy.cur >= src_policy.cur) {
 			pr_debug("No sync. CPU%d@%dKHz >= CPU%d@%dKHz\n",
-				 dest_cpu, dest_policy.cur, src_cpu, src_policy.cur);
+				 dest_cpu, dest_policy.cur,
+				 src_cpu, src_policy.cur);
 			continue;
 		}
 
@@ -156,14 +158,11 @@ static int boost_mig_sync_thread(void *data)
 			continue;
 
 		cancel_delayed_work_sync(&s->boost_rem);
-		if (sync_threshold) {
-			if (src_policy.cur >= sync_threshold)
-				s->boost_min = sync_threshold;
-			else
-				s->boost_min = src_policy.cur;
-		} else {
+		if (sync_threshold)
+			s->boost_min = min(sync_threshold, src_policy.cur);
+		else
 			s->boost_min = src_policy.cur;
-		}
+
 		/* Force policy re-evaluation to trigger adjust notifier. */
 		cpufreq_update_policy(dest_cpu);
 		queue_delayed_work_on(s->cpu, cpu_boost_wq,
@@ -180,6 +179,10 @@ static int boost_migration_notify(struct notifier_block *nb,
 	struct cpu_sync *s = &per_cpu(sync_info, dest_cpu);
 
 	if (!boost_ms)
+		return NOTIFY_OK;
+
+	/* Avoid deadlock in try_to_wake_up() */
+	if (s->thread == current)
 		return NOTIFY_OK;
 
 	pr_debug("Migration: CPU%d --> CPU%d\n", (int) arg, (int) dest_cpu);
@@ -333,8 +336,8 @@ static int cpu_boost_init(void)
 		s->thread = kthread_run(boost_mig_sync_thread, (void *)cpu,
 					"boost_sync/%d", cpu);
 	}
-	//atomic_notifier_chain_register(&migration_notifier_head,
-					//&boost_migration_nb);
+	atomic_notifier_chain_register(&migration_notifier_head,
+					&boost_migration_nb);
 
 	ret = input_register_handler(&cpuboost_input_handler);
 	return 0;
