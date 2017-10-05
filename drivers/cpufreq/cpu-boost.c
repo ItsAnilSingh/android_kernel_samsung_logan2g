@@ -336,8 +336,8 @@ static int cpu_boost_init(void)
 		s->thread = kthread_run(boost_mig_sync_thread, (void *)cpu,
 					"boost_sync/%d", cpu);
 	}
-	atomic_notifier_chain_register(&migration_notifier_head,
-					&boost_migration_nb);
+	//atomic_notifier_chain_register(&migration_notifier_head,
+					//&boost_migration_nb);
 
 	ret = input_register_handler(&cpuboost_input_handler);
 	return 0;
