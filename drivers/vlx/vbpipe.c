@@ -1702,8 +1702,8 @@ ex_read_k (unsigned int minor, char * buf, size_t count)
 	     * exit if we have a problem
 	     */
 	if (memcpy(buf, &sring->ring[ex_dev->s_pos], cnt)) {
-	    done = -EFAULT;
-	    break;
+	    //done = -EFAULT;
+	    //break;
 	}
 	    /*
 	     * Next chunk

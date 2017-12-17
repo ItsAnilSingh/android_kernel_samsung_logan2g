@@ -55,6 +55,7 @@ obj-$(CONFIG_SPRD_SC8825_MEMFREQ_ONDEMAND)    += memfreq_ondemand.o
 obj-$(CONFIG_SPRD_MEM_POOL)    += sprd_mem_pool.o
 obj-$(CONFIG_SEC_DEBUG) += sec_debug.o sec_gaf.o sec_getlog.o sec-common.o sec-reboot.o sys_debug.o
 obj-$(CONFIG_CPU_FREQ_SC8825) += cpufreq-sc8825.o
+obj-$(CONFIG_HAS_PSFREQ) += psfreq.o
 obj-y += ss_musb_info.o
 
 sprdboarddirs := $(patsubst %,arch/arm/mach-sc8825/%,$(sprdboard-y))

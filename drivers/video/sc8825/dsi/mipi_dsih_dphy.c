@@ -35,6 +35,166 @@ dsih_error_t mipi_dsih_dphy_open(dphy_t * phy)
     phy->status = INITIALIZED;                                                                                                                                         
     return OK;                                                                                                                                                         
 }                                                                                                                                                                      
+
+
+dsih_error_t mipi_dsih_dphy_fh(dphy_t * phy, uint8_t no_of_lanes, uint32_t output_freq)
+{
+    uint32_t loop_divider = 0; /* (M) */
+    uint32_t input_divider = 1; /* (N) */
+    uint8_t data[4]; /* maximum data for now are 4 bytes per test mode*/
+    uint8_t no_of_bytes = 0;
+    uint8_t i = 0; /* iterator */
+    uint8_t range = 0; /* ranges iterator */
+    int flag = 0;
+
+#ifdef DWC_MIPI_DPHY_BIDIR_TSMC40LP
+    struct
+    {
+        uint32_t freq;  /* upper margin of frequency range */
+        uint8_t hs_freq; /* hsfreqrange */
+        uint8_t vco_range; /* vcorange */
+    }
+    ranges[] =
+    {
+        {90, 0x00, 0x01}, {100, 0x10, 0x01}, {110, 0x20, 0x01},
+        {125, 0x01, 0x01}, {140, 0x11, 0x01}, {150, 0x21, 0x01},
+        {160, 0x02, 0x01}, {180, 0x12, 0x03}, {200, 0x22, 0x03},
+        {210, 0x03, 0x03}, {240, 0x13, 0x03}, {250, 0x23, 0x03},
+        {270, 0x04, 0x07}, {300, 0x14, 0x07}, {330, 0x24, 0x07},
+        {360, 0x15, 0x07}, {400, 0x25, 0x07}, {450, 0x06, 0x07},
+        {500, 0x16, 0x07}, {550, 0x07, 0x0f}, {600, 0x17, 0x0f},
+        {650, 0x08, 0x0f}, {700, 0x18, 0x0f}, {750, 0x09, 0x0f},
+        {800, 0x19, 0x0f}, {850, 0x0A, 0x0f}, {900, 0x1A, 0x0f},
+        {950, 0x2A, 0x0f}, {1000, 0x3A, 0x0f}
+    };
+    struct
+    {
+        uint32_t loop_div; /* upper limit of loop divider range */
+        uint8_t cp_current; /* icpctrl */
+        uint8_t lpf_resistor; /* lpfctrl */
+    }
+    loop_bandwidth[] =
+    {
+        {32, 0x06, 0x10}, {64, 0x06, 0x10}, {128, 0x0C, 0x08},
+        {256, 0x04, 0x04}, {512, 0x00, 0x01}, {768, 0x01, 0x01},
+        {1000, 0x02, 0x01}
+    };
+#elif defined DPHY2Btql
+    struct
+    {
+        uint32_t loop_div; /* upper limit of loop divider range */
+        uint8_t cp_current; /* icpctrl */
+        uint8_t lpf_resistor; /* lpfctrl */
+    }
+    loop_bandwidth[] =
+    {
+        {32, 0x0B, 0x00}, {64, 0x0A, 0x00}, {128, 0x09, 0x01},
+        {256, 0x08, 0x03}, {512, 0x08, 0x07}, {768, 0x08, 0x0F},
+        {1000, 0x08, 0x1F}
+    };
+#endif
+    if (phy == 0)
+    {
+        return ERR_DSI_INVALID_INSTANCE;
+    }
+    if (phy->status < INITIALIZED)
+    {
+        return ERR_DSI_INVALID_INSTANCE;
+    }
+    if (output_freq < MIN_OUTPUT_FREQ)
+    {
+        return ERR_DSI_PHY_FREQ_OUT_OF_BOUND;
+    }
+    /* find M and N dividers */
+    for (input_divider = 1 + (phy->reference_freq / DPHY_DIV_UPPER_LIMIT); ((phy->reference_freq / input_divider) >= DPHY_DIV_LOWER_LIMIT) && (!flag); input_divider++)
+    {   /* here the >= DPHY_DIV_LOWER_LIMIT is a phy constraint, formula should be above 1 MHz */
+        if (((output_freq * input_divider) % (phy->reference_freq )) == 0)
+        {   /* values found */
+            loop_divider = ((output_freq * input_divider) / (phy->reference_freq ));
+            if (loop_divider >= 12)
+            {
+                flag = 1;
+            }
+        }
+    }
+    if ((!flag) || ((phy->reference_freq / input_divider) < DPHY_DIV_LOWER_LIMIT))
+    {   /* no exact value found in previous for loop */
+        /* this solution is not favourable as jitter would be maximum */
+        loop_divider = output_freq / DPHY_DIV_LOWER_LIMIT;
+        input_divider = phy->reference_freq / DPHY_DIV_LOWER_LIMIT;
+    }
+    else
+    {   /* variable was incremented before exiting the loop */
+        input_divider--;
+    }
+    for (i = 0; (i < (sizeof(loop_bandwidth)/sizeof(loop_bandwidth[0]))) && (loop_divider > loop_bandwidth[i].loop_div); i++)
+    {
+        ;
+    }
+    if (i >= (sizeof(loop_bandwidth)/sizeof(loop_bandwidth[0])))
+    {
+        return ERR_DSI_PHY_FREQ_OUT_OF_BOUND;
+    }
+#ifdef DWC_MIPI_DPHY_BIDIR_TSMC40LP
+    /* find ranges */
+    for (range = 0; (range < (sizeof(ranges)/sizeof(ranges[0]))) && ((output_freq / 1000) > ranges[range].freq); range++)
+    {
+        ;
+    }
+    if (range >= (sizeof(ranges)/sizeof(ranges[0])))
+    {
+        return ERR_DSI_PHY_FREQ_OUT_OF_BOUND;
+    }
+    /* set up board depending on environment if any */
+    if (phy->bsp_pre_config != 0)
+    {
+        phy->bsp_pre_config(phy, 0);
+    }
+
+    /* setup digital part */
+    /* hs frequency range [7]|[6:1]|[0]*/
+    data[0] = (0 << 7) | (ranges[range].hs_freq << 1) | 0;
+   //data[0] = (0 << 7) | (0x23 << 1) | 0;
+   /*From ASIC, we need unmask this code to make the frequency correct*/
+    mipi_dsih_dphy_write(phy, 0x44, data, 1);       //Jessica remove for more accurate frequency
+    /* setup PLL */
+    /* vco range  [7]|[6:3]|[2:1]|[0] */
+    data[0] = (1 << 7) | (ranges[range].vco_range << 3) | (0 << 1) | 0;
+    mipi_dsih_dphy_write(phy, 0x10, data, 1);                 //Jessica
+    /* PLL  reserved|Input divider control|Loop Divider Control|Post Divider Ratio [7:6]|[5]|[4]|[3:0] */
+    data[0] = (0x00 << 6) | (0x01 << 5) | (0x01 << 4) | (0x03 << 0); /* post divider default = 0x03 - it is only used for clock out 2*/
+    mipi_dsih_dphy_write(phy, 0x19, data, 1);      //Jessica
+#elif defined DPHY2Btql
+    /* vco range  [7:5]|[4]|[3]|[2:1]|[0] */
+    data[0] =  ((((output_freq / 1000) > 500 )? 1: 0) << 4) | (1 << 3) | (0 << 1) | 0;
+    mipi_dsih_dphy_write(phy, 0x10, data, 1);
+#endif
+    /* PLL Lock bypass|charge pump current [7:4]|[3:0] */
+    data[0] = (0x00 << 4) | (loop_bandwidth[i].cp_current << 0);
+    mipi_dsih_dphy_write(phy, 0x11, data, 1);           //Jessica
+    /* bypass CP default|bypass LPF default| LPF resistor [7]|[6]|[5:0] */
+    data[0] = (0x01 << 7) | (0x01 << 6) |(loop_bandwidth[i].lpf_resistor << 0);
+    mipi_dsih_dphy_write(phy, 0x12, data, 1);
+    /* PLL input divider ratio [7:0] */
+   data[0] = input_divider - 1;
+   mipi_dsih_dphy_write(phy, 0x17, data, 1);           //Jessica
+
+    no_of_bytes = 2; /* pll loop divider (code 0x18) takes only 2 bytes (10 bits in data) */
+    for (i = 0; i < no_of_bytes; i++)
+    {
+        data[i] = ((uint8_t)((((loop_divider - 1) >> (5 * i)) & 0x1F) | (i << 7) ));
+        /* 7 is dependent on no_of_bytes
+        make sure 5 bits only of value are written at a time */
+    }
+
+	/* PLL loop divider ratio - SET no|reserved|feedback divider [7]|[6:5]|[4:0] */
+	  mipi_dsih_dphy_write(phy, 0x18, data, no_of_bytes);
+
+    return OK;
+}
+                                                                                                                                                
+
+                                                                                                                                                                     
 dsih_error_t mipi_dsih_dphy_configure(dphy_t * phy, uint8_t no_of_lanes, uint32_t output_freq)                                                                         
 {                                                                                                                                                                      
     uint32_t loop_divider = 0; /* (M) */                                                                                                                               

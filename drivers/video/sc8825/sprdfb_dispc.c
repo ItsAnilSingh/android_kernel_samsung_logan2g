@@ -20,11 +20,35 @@
 #include <mach/hardware.h>
 #include <mach/globalregs.h>
 #include <mach/irqs.h>
+#include <mach/psfreq.h>
 
 #include <mach/sci.h>
 #include "sprdfb_dispc_reg.h"
 #include "sprdfb.h"
 #include "sprdfb_panel.h"
+
+#define ECHO_MIPI_FP
+#if defined ECHO_MIPI_FP //william
+#include <linux/semaphore.h>
+#include <linux/spinlock.h>
+
+#define PHY_SET_CLASS          "phy"
+#define PHY_SET_DEV            "phy_dev"
+#define PHY_SET_BUF_MAX_SIZE   0x2FF
+
+//static u8 phy_set_buf[PHY_SET_BUF_MAX_SIZE + 1];
+static struct class         *phy_set_class;
+static struct device        *phy_set_dev;
+static struct semaphore      phy_set_sema;
+static struct spinlock       phy_set_lock;
+static struct sprdfb_device *debug_dev;
+//static bool IS_PHY_FEQ_CHANGED = false;
+extern void dsi_change_phy_feq(struct sprdfb_device *dev);
+
+static ssize_t phy_set_show(struct device *dev, struct device_attribute *attr, char *buf);
+static ssize_t phy_set_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size);
+static DEVICE_ATTR(phy_feq, 0664, phy_set_show, phy_set_store);
+#endif
 
 #define DISPC_SOFT_RST (20)
 #define DISPC_CLOCK_PARENT ("clk_256m")
@@ -96,6 +120,9 @@ extern void sprdfb_panel_invalidate_rect(struct panel_spec *self,
 #ifdef CONFIG_FB_ESD_SUPPORT
 extern uint32_t sprdfb_panel_ESD_check(struct sprdfb_device *dev);
 #endif
+
+extern int32_t sprdfb_dsi_mipi_fh(struct sprdfb_device *dev, uint phy_feq, bool need_fh);//LiWei add
+
 extern int panel_init(struct sprdfb_device *dev);
 
 #ifdef CONFIG_FB_LCD_OVERLAY_SUPPORT
@@ -430,6 +457,86 @@ static void dispc_stop(struct sprdfb_device *dev)
 	}
 }
 
+
+#if defined CONFIG_FB_LCD_SC7798A_MIPI
+extern int32_t sc7798a_white_scan_enable(struct panel_spec *self);
+extern int32_t sc7798a_white_scan_disable(struct panel_spec *self);
+#endif
+
+extern void sprdfb_dsi_save_fh(uint phy_feq,bool need_fh);
+
+static bool sprdfb_dispc_is_fh(uint phy_feq, bool need_fh, struct sprdfb_device * dev)
+{
+    bool result = true;
+
+    //lcd not exist
+    if(NULL == dev)
+    {
+        result = false;
+        printk("sprdfb_dispc_is_fh_lcd_not_exist\n");
+    }
+    //nv parameter error
+    else if(0 == need_fh && 0 == phy_feq)
+    {
+        result = false;
+        printk("sprdfb_dispc_is_fh_nv_para_error\n");
+    }
+    //lcd suspend && save phy_feq
+    else if(0 == dev->enable && 0 == need_fh)
+    {
+        sprdfb_dsi_save_fh(phy_feq*200,need_fh);
+        result   = false;
+        printk("sprdfb_dispc_is_fh_save_feq,phy_feq = %d\n",phy_feq);
+    }
+    else
+    {
+        printk("sprdfb_dispc_is_fh,need_fh = %d,phy_feq = %d\n",need_fh,phy_feq);
+    }    
+    return result;
+}
+
+static int sprdfb_dispc_mipi_fh(unsigned int phy_feq, unsigned int need_fh)//LiWei add
+{
+    struct sprdfb_device * dev = debug_dev;
+
+	if(!sprdfb_dispc_is_fh(phy_feq,need_fh,dev))
+    {
+        return 0;
+    } 
+    //while(dev->refresh_lock.count == 0){
+    //    printk("sprdfb:sprdfb_mipi_fh count=%d\n",dev->refresh_lock.count);
+    //}
+
+    //lock
+	down(&dev->refresh_lock);
+
+#if defined CONFIG_FB_LCD_SC7798A_MIPI
+    //white scan disable
+    sc7798a_white_scan_disable(dev->panel);
+#endif
+
+    //dispc stop
+	dispc_stop(dev);
+	while(dispc_read(DISPC_DPI_STS1) & BIT(16));
+
+    //mipi clk change
+	sprdfb_dsi_mipi_fh(dev,phy_feq*200,need_fh);
+	udelay(500);
+
+#if defined CONFIG_FB_LCD_SC7798A_MIPI
+    //white scan enable
+    sc7798a_white_scan_enable(dev->panel);
+#endif
+
+    //dispc run
+	dispc_run(dev);
+
+    //unlock
+	up(&dev->refresh_lock);
+	return 0;
+}
+
+
 static int32_t sprdfb_dispc_early_init(struct sprdfb_device *dev)
 {
 	int ret = 0;
@@ -562,6 +669,9 @@ static int32_t sprdfb_dispc_early_init(struct sprdfb_device *dev)
 #endif
 #endif
 
+#ifdef CONFIG_FB_LCD_MIPI_FH_SUPPORT
+	register_freqconv_change(sprdfb_dispc_mipi_fh);
+#endif
 	sema_init(&dev->refresh_lock, 1);
 	dispc_ctx.is_inited = true;
 
@@ -707,8 +817,31 @@ static void dispc_clk_clear_status(struct sprdfb_dispc_context *dispc_ctx_ptr)
 	dispc_ctx_ptr->clk_open_count=0;
 }
 
+#if defined ECHO_MIPI_FP //william
+static ssize_t phy_set_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return 0;
+}
+
+static ssize_t phy_set_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
+{
+	int phy_feq;
+    printk("sprdfb:sprdfb_mipi_fh_1\n");
+
+    phy_feq = (buf[0]-48)*100 + (buf[1]-48)*10 + buf[2]-48;
+    //sprdfb_dispc_mipi_fh(phy_feq*1000, true);
+    phy_feq *= 5;
+    sprdfb_dispc_mipi_fh(phy_feq, false);
+    printk("sprdfb:sprdfb_mipi_fh_6,phy_feq = %d\n",phy_feq);
+
+    return size;
+}
+#endif
+
+
 static int32_t sprdfb_dispc_init(struct sprdfb_device *dev)
 {
+	static bool local_count = false;
 	pr_debug(KERN_INFO "sprdfb:[%s]\n",__FUNCTION__);
 	/*set bg color*/
 	dispc_set_bg_color(0xFFFFFFFF);
@@ -739,6 +872,55 @@ static int32_t sprdfb_dispc_init(struct sprdfb_device *dev)
 	}
 	dispc_set_bits(BIT(2), DISPC_INT_EN);
 	dev->enable = 1;
+	if(!local_count)
+	{
+	    printk("sprdfb:sprdfb_mipi_fh_**,local_count = %d\n",local_count);
+
+	    local_count = true;
+
+
+#if defined ECHO_MIPI_FP //william
+	    phy_set_class = class_create(THIS_MODULE, PHY_SET_CLASS);
+	    if (IS_ERR(phy_set_class))
+	    {
+		pr_err("%s(), line: %d. Failed to create phy_set_class!\n",__FUNCTION__, __LINE__);
+		goto CLASS_CREATE_ERR;
+	    }
+
+	    phy_set_dev = device_create(phy_set_class, NULL, 0, NULL, PHY_SET_DEV);
+	    if (IS_ERR(phy_set_dev))
+	    {
+		pr_err("%s(), line: %d. Failed to create phy_set_dev!\n",__FUNCTION__, __LINE__);
+		goto DEVICE_CREATE_ERR;
+	    }
+
+	    if (device_create_file(phy_set_dev, &dev_attr_phy_feq) < 0)
+	    {
+		pr_err("%s(), line: %d. Failed to create file(%s)!\n",__FUNCTION__, __LINE__, dev_attr_phy_feq.attr.name);
+		goto DEVICE_CREATE_FILE_ERR;
+	    }
+
+	    sema_init(&phy_set_sema, 1);
+	    spin_lock_init(&phy_set_lock);
+	    debug_dev = dev;
+	    goto OUT;
+
+	DEVICE_CREATE_FILE_ERR:
+
+	    device_destroy(phy_set_class, 0);
+
+	DEVICE_CREATE_ERR:
+
+	    class_destroy(phy_set_class);
+
+	CLASS_CREATE_ERR:
+
+	    phy_set_class = NULL;
+
+	OUT:
+		return 0;
+#endif
+	}
 	return 0;
 }
 
@@ -975,7 +1157,6 @@ static int32_t sprdfb_dispc_check_esd_dpi(struct sprdfb_device *dev)
 {
 	uint32_t ret = 0;
 	unsigned long flags;
-
 #ifdef FB_CHECK_ESD_BY_TE_SUPPORT
 	ret = sprdfb_panel_ESD_check(dev);
 	if(0 !=ret){

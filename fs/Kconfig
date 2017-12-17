@@ -277,4 +277,10 @@ endif
 source "fs/nls/Kconfig"
 source "fs/dlm/Kconfig"
 
+config IOSCHED_CLASS_CONTROL
+	bool
+	default n
+	help
+	  I/O sched class control
+
 endmenu

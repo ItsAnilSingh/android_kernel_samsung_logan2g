@@ -19,6 +19,9 @@
                                                                                                                      
 /* obligatory functions - code can be changed for different phys*/                                                   
 dsih_error_t mipi_dsih_dphy_open(dphy_t * phy);                                                                      
+
+dsih_error_t mipi_dsih_dphy_fh(dphy_t * phy, uint8_t no_of_lanes, uint32_t output_freq);//LiWei add   
+
 dsih_error_t mipi_dsih_dphy_configure(dphy_t * phy, uint8_t no_of_lanes, uint32_t output_freq);                      
 dsih_error_t mipi_dsih_dphy_close(dphy_t * phy);                                                                     
                                                                                                                      

@@ -117,6 +117,12 @@ config SPRD_DCDC_DEBUG
 	help
 		This option select dcdc debug module.
 
+config HAS_PSFREQ
+	default n
+	bool "PSFREQ"
+	help
+		This option select ps freq change.
+
 config BT_MGMT
 	bool "Bluetooth Mgmt"
 	default n

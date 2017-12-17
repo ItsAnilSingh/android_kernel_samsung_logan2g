@@ -52,6 +52,7 @@
 #define ANA_RTC_MIN_ALARM_CNT           (RTC_BASE + 0x44)
 #define ANA_RTC_HRS_ALARM_CNT           (RTC_BASE + 0x48)
 #define ANA_RTC_DAY_ALARM_CNT           (RTC_BASE + 0x4C)
+#define ANA_RTC_SPG_VALUE				(RTC_BASE + 0x50)
 #define ANA_RTC_SPG_UPD						 (RTC_BASE + 0x54)
 
 #define ANA_RTC_SPG_CNT                 (RTC_BASE + 0x50)
@@ -423,11 +424,11 @@ static int sprd_rtc_set_alarm(struct device *dev,
 			msleep(1);
 			i++;
 		}while(read_secs != secs && i < SPRD_RTC_SET_MAX);
-		sci_adi_raw_write(ANA_RTC_SPG_UPD, SPRD_RTC_UNLOCK);
+		//sci_adi_raw_write(ANA_RTC_SPG_UPD, SPRD_RTC_UNLOCK);
 		wake_unlock(&rtc_wake_lock);
 	}else{
 		sci_adi_clr(ANA_RTC_INT_EN, RTC_ALARM_BIT);
-		sci_adi_raw_write(ANA_RTC_SPG_UPD, SPRD_RTC_LOCK);
+		//sci_adi_raw_write(ANA_RTC_SPG_UPD, SPRD_RTC_LOCK);
 		msleep(150);
 	}
 
@@ -542,6 +543,26 @@ static int sprd_remove_caliberate_attr(struct device dev)
 	}
 	return 0;
 }
+
+static int sprd_rtc_check_power_down(struct device *dev)
+{
+	int spg_value;
+	int ret;
+	unsigned long secs;
+	struct rtc_time tm;
+
+	spg_value = sci_adi_read(ANA_RTC_SPG_VALUE);
+	if(spg_value != SPRD_RTC_UNLOCK){
+		printk("RTC power down and reset RTC time!\n");
+		secs = mktime(CONFIG_RTC_START_YEAR, 1, 1, 8, 0, 0);
+		rtc_time_to_tm(secs, &tm);
+		if((ret = sprd_rtc_set_time(dev,&tm)) < 0)
+			return ret;
+	}
+	
+	return 0;
+}
+
 static int sprd_rtc_open(struct device *dev)
 {
 	int temp = 0;
@@ -549,6 +570,10 @@ static int sprd_rtc_open(struct device *dev)
 	temp = sci_adi_read(ANA_RTC_INT_EN);
 	temp |= RTC_ALARM_BIT;
 	sci_adi_raw_write(ANA_RTC_INT_EN, temp);
+
+	//add by wbl
+	sci_adi_raw_write(ANA_RTC_SPG_UPD, SPRD_RTC_UNLOCK);
+	printk(KERN_EMERG "sprd_rtc_open is calling!\n");
 	return 0;
 }
 
@@ -615,6 +640,11 @@ static int sprd_rtc_probe(struct platform_device *plat_dev)
 
 	sprd_rtc_hwrst_set(1);
 	sprd_rtc_set_bit_spg_counter(SPG_CNT_8SECS_RESET, 1);
+
+	sprd_rtc_check_power_down(&plat_dev->dev);
+
+	sprd_rtc_open(&plat_dev->dev);//test
+
 	return 0;
 
 unregister_rtc:

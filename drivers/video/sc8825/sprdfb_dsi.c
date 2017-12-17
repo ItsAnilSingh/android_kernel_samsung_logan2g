@@ -50,6 +50,19 @@ struct sprdfb_dsi_context {
 
 static struct sprdfb_dsi_context dsi_ctx;
 
+static struct semaphore sem_dsi_init;//LiWei add
+static struct timespec pre_time;//LiWei add
+static uint dphy_feq = 500 * 1000;//LiWei add
+static bool is_fh = true;//LiWei add
+static uint s_feq_change = 0;//LiWei add
+
+void sprdfb_dsi_save_fh(uint phy_feq,bool need_fh)
+{
+    dphy_feq = phy_feq;
+    is_fh    = need_fh;
+    s_feq_change ++;
+}
+
 static int32_t sprdfb_dsi_set_lp_mode(void);
 
 static uint32_t dsi_core_read_function(uint32_t addr, uint32_t offset)
@@ -264,6 +277,39 @@ static void dsi_log_error(const char * string)
 }
 
 
+int32_t sprdfb_dsi_mipi_fh(struct sprdfb_device *dev, uint phy_feq, bool need_fh)//LiWei add
+{
+	struct timespec now = current_kernel_time();
+    struct info_mipi * mipi = dev->panel->info.mipi;
+    dsih_ctrl_t* dsi_instance = &(dsi_ctx.dsi_inst);
+	dphy_t *phy = &(dsi_instance->phy_instance);
+	dsih_error_t result = OK;
+	is_fh = need_fh;
+    if (0==need_fh){
+        dphy_feq = phy_feq;
+        s_feq_change ++;
+    } else {
+        dphy_feq = dev->panel->info.mipi->phy_feq;
+    }
+
+	down(&sem_dsi_init);
+    printk("sprdfb: [%s] nanji_mipi_fh s_feq_change = (%d)!\n", __FUNCTION__, s_feq_change);
+    phy->status = INITIALIZED;
+    result = mipi_dsih_dphy_fh(phy,mipi->lan_number, dphy_feq);
+    phy->status = NOT_INITIALIZED;
+    printk("sprdfb: [%s] nanji_mipi_fh result = (%d)!\n", __FUNCTION__, result);
+    pre_time = current_kernel_time();
+	up(&sem_dsi_init);
+	return 0;
+}
+
+void sprdfb_dsi_sema_init(void)
+{
+    sema_init(&sem_dsi_init,1);//LiWei add
+}
+
+
+
 int32_t sprdfb_dsi_init(struct sprdfb_device *dev)
 {
 	dsih_error_t result = OK;
@@ -271,10 +317,20 @@ int32_t sprdfb_dsi_init(struct sprdfb_device *dev)
 	dphy_t *phy = &(dsi_instance->phy_instance);
 	struct info_mipi * mipi = dev->panel->info.mipi;
 	bool resume = false;
+	static bool is_inited = false;
     int ret = 0;
     dsi_ctx.dev = dev;
 
 	pr_debug(KERN_INFO "sprdfb:[%s]\n", __FUNCTION__);
+	if (is_inited==false){
+        sema_init(&sem_dsi_init,1);//LiWei add
+        is_inited = true;
+        printk("mipi_fh sem_dsi_init\n");
+    }
+    printk("sprdfb:sprdfb_mipi_fh_123\n");
+
+	down(&sem_dsi_init);//LiWei add
+    printk("sprdfb:sprdfb_mipi_fh_321\n");
 
 	if(dev->panel_ready && dsi_ctx.is_inited){
 		resume = true;
@@ -314,7 +370,7 @@ int32_t sprdfb_dsi_init(struct sprdfb_device *dev)
 		printk(KERN_INFO "sprdfb:[%s]: dsi has alread initialized\n", __FUNCTION__);
 		dsi_instance->status = INITIALIZED;
 		dsi_ctx.status = 0;
-
+		up(&sem_dsi_init);//LiWei
 		ret = request_irq(IRQ_DSI_INT0, dsi_isr0, IRQF_DISABLED, "DSI_INT0", &dsi_ctx);
 		if (ret) {
 			printk(KERN_ERR "sprdfb: dsi failed to request irq int0!\n");
@@ -362,12 +418,19 @@ int32_t sprdfb_dsi_init(struct sprdfb_device *dev)
 		return -1;
 	}
 
-	result = mipi_dsih_dphy_configure(phy,  mipi->lan_number, mipi->phy_feq);
+	if (0 == is_fh) {//LiWei modify
+		result = mipi_dsih_dphy_configure(phy,  mipi->lan_number, dphy_feq);
+	} else {
+		result = mipi_dsih_dphy_configure(phy,  mipi->lan_number, mipi->phy_feq);
+	}
+
 	if(OK != result){
 		printk(KERN_ERR "sprdfb: [%s]: mipi_dsih_dphy_configure fail (%d)!\n", __FUNCTION__, result);
 		dsi_ctx.status = 1;
 		return -1;
 	}
+
+	pre_time = current_kernel_time();//LiWei add
 
 	while(5 != (dsi_core_read_function(SPRD_MIPI_DSIC_BASE, R_DSI_HOST_PHY_STATUS) & 5));
 
@@ -408,7 +471,7 @@ int32_t sprdfb_dsi_init(struct sprdfb_device *dev)
 	}
  #endif
 	dsi_ctx.status = 0;
-
+	up(&sem_dsi_init);//LiWei
 	return 0;
 }
 

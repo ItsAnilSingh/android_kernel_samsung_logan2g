@@ -1371,6 +1371,7 @@ static void sdhci_hw_reset(struct mmc_host *mmc)
 {
 	int ret = 0;
 	struct sdhci_host *host = mmc_priv(mmc);	
+#if 0	
 	printk("%s, ****************** %s, call mmc_power_off ***********\n", mmc_hostname(mmc), __func__ );
     sdhci_init(host, 0);
 	mmc_power_off(mmc);
@@ -1379,6 +1380,7 @@ static void sdhci_hw_reset(struct mmc_host *mmc)
 	printk("%s, ****************** %s, call mmc_power_up ***********\n", mmc_hostname(mmc), __func__ );
 	mmc_power_up(mmc);
 	printk("%s, ****************** %s ***********\n", mmc_hostname(mmc), __func__ );
+#endif
 }
 
 static void sdhci_request(struct mmc_host *mmc, struct mmc_request *mrq)
